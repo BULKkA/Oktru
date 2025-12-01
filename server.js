@@ -6,34 +6,37 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-const API_KEY = process.env.API_KEY; // <-- ключ берём из ENV
+const API_KEY = process.env.API_KEY;
 
-if (!API_KEY) {
-    console.error("❌ ERROR: API_KEY not set in Render env variables");
-}
+console.log("API_KEY loaded?", API_KEY ? "YES" : "NO");
 
-// --- Прокси запросов ---
+// -------- PROXY --------
 app.post("/proxy", async (req, res) => {
     const { url } = req.body;
 
     try {
+        console.log("➡ Proxy request:", url);
+
         const r = await fetch(url, {
             headers: {
-                Authorization: API_KEY  // <-- ключ напрямую из ENV
+                "x-api-key": API_KEY   // <-- правильный заголовок
             }
         });
+
+        console.log("⬅ API status:", r.status);
 
         const data = await r.json();
         res.json(data);
 
     } catch (err) {
+        console.log("❌ Proxy error", err);
         res.status(500).json({ error: err.message });
     }
 });
 
-// --- Фронтенд (один HTML-файл) ---
+// -------- FRONTEND (HTML в одном файле) --------
 app.get("/", (req, res) => {
-    res.send(`
+res.send(`
 <!DOCTYPE html>
 <html lang="ru">
 <head>
@@ -45,21 +48,34 @@ app.get("/", (req, res) => {
  .node { margin-left:20px; cursor:pointer; padding:4px 0; }
  .children { margin-left:20px; border-left:1px dashed #ccc; padding-left:10px; display:none; }
  .node.open + .children { display:block; }
+ .err { color:red; margin-top:20px; }
 </style>
 </head>
 <body>
 <h2>OKTRU Tree Viewer</h2>
 
-<div id="tree">Загрузка...</div>
+<div id="tree">Загрузка корневых данных...</div>
+<div id="error" class="err"></div>
 
 <script>
 async function fetchJSON(url) {
-    const res = await fetch("/proxy", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url })
-    });
-    return res.json();
+    try {
+        const res = await fetch("/proxy", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ url })
+        });
+
+        if (!res.ok) {
+            document.getElementById("error").innerText =
+                "Ошибка API: " + res.status;
+        }
+
+        return res.json();
+    } catch (e) {
+        document.getElementById("error").innerText = "Ошибка: " + e.message;
+        return [];
+    }
 }
 
 async function createNode(item) {
@@ -74,6 +90,7 @@ async function createNode(item) {
 
     node.onclick = async () => {
         if (!item.hasChild) return;
+
         const open = node.classList.toggle("open");
 
         if (open && childrenBox.childElementCount === 0) {
@@ -84,6 +101,7 @@ async function createNode(item) {
             );
 
             childrenBox.innerHTML = "";
+
             for (const ch of children) {
                 childrenBox.appendChild(await createNode(ch));
             }
@@ -97,13 +115,18 @@ async function createNode(item) {
 
 (async () => {
     const treeEl = document.getElementById("tree");
-    treeEl.innerHTML = "<b>Загрузка корневых данных...</b>";
 
     const roots = await fetchJSON(
         "https://nationalcatalog.kz/gwp/portal/api/v1/dictionaries/oktru/roots"
     );
 
+    if (!roots || !roots.length) {
+        treeEl.innerHTML = "<b style='color:red'>Нет данных. Проверь API_KEY.</b>";
+        return;
+    }
+
     treeEl.innerHTML = "";
+
     for (const item of roots) {
         treeEl.appendChild(await createNode(item));
     }
